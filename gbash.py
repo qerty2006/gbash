@@ -107,27 +107,30 @@ def generate_script(model, command, stage, attachment):
         print(response.prompt_feedback)
     return script
 
+def parse_response(response_text, debug = False):
+    
+    if debug:
+        print("========")
+        print(response_text)
+        print("========")
 
-def parse_response(response_text):
-    """Parses the response from Gemini and identifies the type and content."""
-    print("========")
-    print(response_text)
-    print("========")
-    if "FINAL_SCRIPT" in response_text:
-        script = re.search(r"FINAL_SCRIPT\n(.*)", response_text, re.DOTALL).group(1)
-        return "script", script
-    elif "STAGING_SCRIPT" in response_text:
-        script = re.search(r"STAGING_SCRIPT\n(.*)", response_text, re.DOTALL).group(1)
-        return "staging_script", script
-    elif "REQUEST_UNCLEAR" in response_text:
-        question = re.search(r"REQUEST_UNCLEAR\n(.*)", response_text, re.DOTALL).group(1)
-        return "question", question
-    elif "FINAL_ANSWER" in response_text:
-        answer = re.search(r"FINAL_ANSWER\n(.*)", response_text, re.DOTALL).group(1)
-        return "answer", answer
-    else:
+    filter = "" 
+
+    filteroptions = ["FINAL_SCRIPT", "STAGING_SCRIPT", "FINAL_ANSWER"]
+
+    for option in filteroptions:
+        if option in response_text:
+            filter = option
+            break
+    
+    if filter not in filteroptions:
         return "unknown", response_text
-
+    
+    groups = re.search( fr"{filter}(\s*)\n(.*)", response_text, re.DOTALL)
+    section1, section2 = groups.group(1), groups.group(2) 
+    if debug:
+        print(f"Filter:{filter},\n1: {section1},\n2: {section2}")
+    return filter,(section2 if section2 else section1)
 
 def create_temp_file(file_content):
     """
@@ -188,13 +191,7 @@ def main():
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ]
-    if os.getenv("API_KEY") is None:
-        print("API_KEY is not set... please set it and export it in your shell")
-        print('Example:')
-        print(' $ API_KEY="21Ab..........."')
-        print(' $ export API_KEY')
-        exit()
-    genai.configure(api_key=os.getenv("API_KEY"))
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel(
         model_name='models/gemini-1.5-flash-latest',
         generation_config=generation_config,
@@ -213,7 +210,7 @@ def main():
         query_count += 1
         response_type, content = parse_response(script)
 
-        if response_type == "script":
+        if response_type == "FINAL_SCRIPT":
             # Execute the final script and print the output
             output = execute_and_capture(content)
             print(output)
@@ -222,7 +219,7 @@ def main():
             stage = 3
             continue  # Ask Gemini for final answer
 
-        elif response_type == "staging_script":
+        elif response_type == "STAGING_SCRIPT":
             # Execute the staging script, capture output, and prepare for next stage
             output = execute_and_capture(content)
             attachment += f"\n\n== STAGING SCRIPT OUTPUT ==\n{output}"
@@ -234,8 +231,8 @@ def main():
             attachment += f"\n\n== CLARIFICATION ==\n{clarification}"
             stage = 1  # We're still in the initial question stage
 
-        elif response_type == "answer": 
-            # We have the final answer directly 
+        elif response_type == "FINAL_ANSWER": 
+            # We have the final answer directly
             print(content)
             break
 
