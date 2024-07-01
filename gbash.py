@@ -76,6 +76,7 @@ def generate_script(model, command, stage, attachment):
         - MUST HAVE REQUIREMENT: YOUR OUTPUT MUST ALWAYS start with the one of the following phrases : STAGING_SCRIPT, FINAL_SCRIPT or FINAL_ANSWER 
         - DO NOT GENERATE A "FINAL_ANSWER" without "FINAL_SCRIPT" or "STAGING_SCRIPT" 
             - Please test before you give your answer.
+        - Do not add extraneous markings to the indicator of your type of answer like "_" or "*"
         - Once you generate a STAGING_SCRIPT or FINAL_SCRIPT, you MUST REVIEW IT and MAKE SURE that it will do what its expected to do... do not guess.
         - When sharing STAGING_SCRIPT or FINAL_SCRIPT ALWAYS start the script with “#!/bin/bash” 
         - You cannot make any modifications in file system outside of /tmp/ directory
@@ -107,7 +108,7 @@ def generate_script(model, command, stage, attachment):
         print(response.prompt_feedback)
     return script
 
-def parse_response(response_text, debug = False):
+def parse_response(response_text, debug = True):
     
     if debug:
         print("========")
@@ -123,14 +124,16 @@ def parse_response(response_text, debug = False):
             filter = option
             break
     
+    print(filter)
     if filter not in filteroptions:
         return "unknown", response_text
     
-    groups = re.search( fr"{filter}(\s*)\n(.*)", response_text, re.DOTALL)
-    section1, section2 = groups.group(1), groups.group(2) 
-    if debug:
-        print(f"Filter:{filter},\n1: {section1},\n2: {section2}")
-    return filter,(section2 if section2 else section1)
+    groups = re.search( fr"{filter}(\s*)\n(.*)\n(.*)", response_text, re.DOTALL)
+    print([groups.group(i) for i in range(1,4)])
+    #section1, section2 = groups.group(1), groups.group(2) 
+    #if debug:
+        #print(f"Filter:{filter},\n1: {section1},\n2: {section2}")
+    return filter,groups.group(2) #(section2 if section2 else section1)
 
 def create_temp_file(file_content):
     """
@@ -148,7 +151,6 @@ def create_temp_file(file_content):
         f.write(file_content)
     return temp_file_path
 
-
 def execute_and_capture(command):
     """Executes a shell command and returns the output as a string,
        including up to 10 lines of error output.
@@ -162,7 +164,6 @@ def execute_and_capture(command):
     #print ("=============="+output+"==============")
     
     return output
-
 
 def main():
     """Interacts with Gemini to process the command and get the final answer."""
@@ -245,7 +246,6 @@ def main():
         else:
             print("Error: Unknown response from Gemini.")
             break
-
 
 if __name__ == "__main__":
     main()
