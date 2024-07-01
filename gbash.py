@@ -191,7 +191,13 @@ def main():
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ]
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+    if os.getenv("API_KEY") is None:
+        print("API_KEY is not set... please set it and export it in your shell")
+        print('Example:')
+        print(' $ API_KEY="21Ab..........."')
+        print(' $ export API_KEY')
+        exit()
+    genai.configure(api_key=os.getenv("API_KEY"))
     model = genai.GenerativeModel(
         model_name='models/gemini-1.5-flash-latest',
         generation_config=generation_config,
