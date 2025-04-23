@@ -1,65 +1,28 @@
-"""
-GBash: Natural Language to Bash Command Translator
-
-This script uses Google's Generative AI API (Gemini) to translate natural language 
-commands into Bash scripts for execution.
-
-**Disclaimer:** This script is for educational and proof-of-concept purposes only. 
-Running generated scripts without proper safeguards can be extremely risky.
-
-https://github.com/royans/gbash/
-"""
-
 import os
 import sys
 import random
 import subprocess
 import argparse
 import re
-import google.generativeai as genai
+from llama_index.llms.ollama import Ollama
 
 debug_level = 0
-
-
+system_info = None
 def remove_empty_lines(text):
-  """Removes empty lines from a string.
-
-  Args:
-    text: The string to remove empty lines from.
-
-  Returns:
-    The string with empty lines removed.
-  """
-  lines = text.splitlines()
-  non_empty_lines = [line for line in lines if line.strip()]
-  return '\n'.join(non_empty_lines)
+    lines = text.splitlines()
+    non_empty_lines = [line for line in lines if line.strip()]
+    return '\n'.join(non_empty_lines)
 
 def log(msg):
     global debug_level
     if debug_level > 0:
         print("=============")
         print(remove_empty_lines(msg))
-    
-    
-def generate_bash_script(chat_session, user_command, current_stage, previous_script_output):
-    """
-    Generates a Bash script from a natural language command using a generative AI model.
 
-    Args:
-        gemini_model: The initialized Google Generative AI model.
-        user_command: The natural language command from the user.
-        current_stage: An integer representing the current stage of the interaction (1, 2, or 3).
-        previous_script_output: The output from a previously executed script (if any).
-
-    Returns:
-        A string containing the generated script or an empty string if no script is generated.
-    """
-
-    system_info = execute_command_capture_output("cat /etc/issue | head -1")
-    if len(system_info) > 5:
-        system_info = "This system is: " + system_info
-    else:
-        system_info = ""
+def generate_bash_script(llm, user_command, current_stage, previous_script_output):
+    global system_info
+    system_info = system_info if system_info else execute_command_capture_output("cat /etc/issue | head -1")
+    system_info = "This system is: " + system_info if len(system_info) > 5 else ""
 
     prompt_template = """
     ## System Administrator's Command Interpreter - Stage {current_stage}
@@ -103,7 +66,8 @@ def generate_bash_script(chat_session, user_command, current_stage, previous_scr
     - **File System Access:** You are restricted to making modifications only within the `/tmp/` directory.
     - **`sudo` Restriction:** You are **NOT** authorized to execute `sudo` commands.
     - **Readable Final Answers:** Final answers must always be in clear, understandable English and should not contain any Bash commands.
-
+    - if cat /etc/issue | head -1 fails to execute, you might be on a Mac, don't try rerunning it.
+    
     **Examples:**
 
     - **"What's the hostname?"** -> Generate a script that runs `hostname` and provide an answer like "The hostname is XYZ."
@@ -140,50 +104,21 @@ def generate_bash_script(chat_session, user_command, current_stage, previous_scr
     """
 
 
-    iteration_template = """
-    **Here is the output:**
-    {previous_script_output}
-    """
-
-
-    if current_stage ==1:
+    
+    if current_stage == 1:
         formatted_prompt = prompt_template.format(
             current_stage=current_stage,
             system_info=system_info,
-            previous_script_output=previous_script_output if previous_script_output else "No previous script output.",
+            previous_script_output=previous_script_output or "No previous script output.",
             user_command=user_command
         )
     else:
-        formatted_prompt = iteration_template.format(
-            previous_script_output=previous_script_output if previous_script_output else "No previous script output.",
-        )
-        
-    response = chat_session.send_message([formatted_prompt])
-    generated_script = ""
+        formatted_prompt = f"**Here is the output:**\n{previous_script_output or 'No previous script output.'}"
 
-    try:
-        generated_script = response.text.replace("`bash", "").replace("`", "")
-    except Exception:
-        print("Query failed -")
-        print(response.prompt_feedback)
-
-    return generated_script
-
+    response = llm.complete(formatted_prompt)
+    return response.text.replace("`bash", "").replace("`", "")
 
 def parse_gemini_response(response_text):
-    """
-    Parses the response from Gemini and identifies the type and content.
-
-    Args:
-        response_text: The raw text response from Gemini.
-
-    Returns:
-        A tuple containing the response type (string) and the corresponding content (string).
-    """
-    #print("========")
-    #print(response_text)
-    #print("========")
-
     response_types = [
         ("script", r"FINAL_SCRIPT\n(.*)"),
         ("staging_script", r"STAGING_SCRIPT\n(.*)"),
@@ -198,50 +133,26 @@ def parse_gemini_response(response_text):
 
     return "unknown", response_text
 
-
 def create_temp_bash_file(file_content):
-    """
-    Creates a temporary file with the given content, specifically for bash scripts.
-
-    Args:
-        file_content: The content to write to the temporary file.
-
-    Returns:
-        The path to the created temporary file.
-    """
     temp_file_path = f"/tmp/gbash.{random.randint(0, 32766)}"
     with open(temp_file_path, "w") as temp_file:
         temp_file.write(file_content)
     return temp_file_path
 
 def execute_command_capture_output(command):
-    """
-    Executes a shell command and returns the output as a string, including up to 10 lines of error output.
-
-    Args:
-        command: The shell command to execute.
-
-    Returns:
-        A string containing the combined standard output and up to 10 lines of standard error.
-    """
-    
-    
-    
     log(f"Exec :{command}")
     process_result = subprocess.run(command, shell=True, capture_output=True, text=True)
     standard_output = process_result.stdout
     standard_error = process_result.stderr
 
     if standard_error:
-        error_lines = standard_error.splitlines()[:10]  # Capture up to 10 lines of error
+        error_lines = standard_error.splitlines()[:10]
         standard_output += "\n\n== ERRORS ==\n" + "\n".join(error_lines)
     log(f"Output : {standard_output}")
 
     return standard_output
+
 def main():
-    """
-    Main function to interact with Gemini, process commands, and manage the conversation flow.
-    """
     global debug_level
 
     user_id = execute_command_capture_output("id -u")
@@ -258,46 +169,19 @@ def main():
         print("Error: Please provide a natural language command.")
         sys.exit(1)
 
-    if args.debug:
-        debug_level = 1
-    else:
-        debug_level = 0
-
+    debug_level = 1 if args.debug else 0
     user_command = " ".join(args.command)
 
-    gemini_generation_config = {
-        "temperature": 0.8,
-        "top_p": 0.5,
-        "top_k": 20,
-        "max_output_tokens": 4048,
-        "stop_sequences": [],
-    }
-
-    gemini_safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
-    ]
-
-    
-    genai.configure(api_key='AIzaSyD7qCmFMwaX2rsVhQr0msYSUK3ATU__s0U')
-    gemini_model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash-exp",  # Choose an appropriate model
-        generation_config=gemini_generation_config,
-        safety_settings=gemini_safety_settings,
-    )
-    
-    chat_session = gemini_model.start_chat()
+    llm = Ollama(model="gemma3:4b", request_timeout=30.0)
 
     interaction_stage = 1
     previous_script_output_attachment = ""
     query_count = 0
-    max_queries = 5
+    max_queries = 100
 
     while query_count < max_queries:
         generated_script = generate_bash_script(
-            chat_session,
+            llm,
             user_command,
             interaction_stage,
             previous_script_output_attachment
@@ -307,39 +191,26 @@ def main():
         response_type, response_content = parse_gemini_response(generated_script)
 
         if response_type == "script":
-            # Execute the final script and print the output
             script_output = execute_command_capture_output(response_content)
-            #log(script_output)
-            # Send the output back to Gemini to create FINAL_ANSWER
             previous_script_output_attachment = f"\n\n== FINAL SCRIPT OUTPUT ==\n{script_output}"
             interaction_stage = 3
-            continue  # Ask Gemini for final answer
-
         elif response_type == "staging_script":
-            # Execute the staging script, capture output, and prepare for the next stage
             script_output = execute_command_capture_output(response_content)
-            #log(script_output)
             previous_script_output_attachment = f"\n\n== STAGING SCRIPT OUTPUT ==\n{script_output}"
             interaction_stage = 2
-
         elif response_type == "question":
-            # Ask the user for clarification and prepare for the next stage
             clarification_input = input(f"Clarification needed: {response_content}\nYour answer: ")
             previous_script_output_attachment = f"\n\n== CLARIFICATION ==\n{clarification_input}"
-            interaction_stage = 1  # Reset to the initial question stage
-
+            interaction_stage = 1
         elif response_type == "answer":
-            # We have the final answer directly
-            print(f"Answer:  {response_content}")
-            break  # Exit the loop
-
+            print(f"Answer :{response_content}")
+            break
         else:
-            print("Error: Unknown response format from Gemini.")
-            break  # Exit the loop
+            print("Error: Unknown response format from model.")
+            break
 
     if query_count >= max_queries:
-        print("Error: Maximum number of queries to Gemini reached.")
-
+        print("Error: Maximum number of queries reached.")
 
 if __name__ == "__main__":
     main()
